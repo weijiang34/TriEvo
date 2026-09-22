@@ -1,0 +1,9 @@
+name: large
+vocab_size: null
+context_length: ${data.context_length}
+d_model: 1280
+num_heads: 20
+d_ff: 5120
+num_layers: 36
+theta: 100000.0
+checkpointing_blocksize: 1

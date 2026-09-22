@@ -1,0 +1,9 @@
+name: small
+vocab_size: null
+context_length: ${data.context_length}
+d_model: 768
+num_heads: 12
+d_ff: 2048
+num_layers: 12
+theta: 10000.0
+checkpointing_blocksize: 1

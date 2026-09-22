@@ -1,0 +1,25 @@
+# job-related files
+*.kman.restech.unsw.edu.au.OU
+jobs
+logs
+
+# hydra
+multirun
+outputs
+
+# dataset
+dataset/*
+
+#benchmark report files
+mem_pkls
+ncu_reports
+nsys_reports
+results
+
+# experiments
+*.pth
+
+# __pycache__
+__pycache__
+
+TriEvo.egg-info

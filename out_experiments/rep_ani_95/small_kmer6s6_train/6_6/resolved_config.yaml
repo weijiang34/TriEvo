@@ -1,0 +1,61 @@
+model:
+  name: small
+  vocab_size: 4100
+  context_length: ${data.context_length}
+  d_model: 768
+  num_heads: 12
+  d_ff: 2048
+  num_layers: 12
+  theta: 10000.0
+  checkpointing_blocksize: 1
+tokenizer:
+  kind: kmer
+  kmer_size: 6
+  stride: 6
+  add_bos: false
+  add_eos: true
+experiment:
+  name: rep_ani_95/small_kmer6s6_train
+  output_dir: /home/wjiang34/LLM/TriEvo/out_experiments/rep_ani_95/small_kmer6s6_train/6_6
+  checkpoint_dir: /home/wjiang34/LLM/TriEvo/out_experiments/rep_ani_95/small_kmer6s6_train/6_6/checkpoints
+  log_dir: /home/wjiang34/LLM/TriEvo/out_experiments/rep_ani_95/small_kmer6s6_train/6_6/logs
+  tb_log_dir: /home/wjiang34/LLM/TriEvo/out_experiments/rep_ani_95/small_kmer6s6_train/6_6/tb_logs
+  do_accounting: true
+  do_train: true
+  do_eval: false
+  do_predict: false
+data:
+  dataset_root: /home/wjiang34/LLM/TriEvo/dataset/refseq_viral/rep_ani_95
+  train_path: /home/wjiang34/LLM/TriEvo/dataset/refseq_viral/rep_ani_95/k6_s6/train_vir.bin
+  val_path: /home/wjiang34/LLM/TriEvo/dataset/refseq_viral/rep_ani_95/k6_s6/val_vir.bin
+  test_path: /home/wjiang34/LLM/TriEvo/dataset/refseq_viral/rep_ani_95/k6_s6/test_vir.bin
+  batch_size: 32
+  context_length: 2048
+training:
+  train_num_iterations: 6000
+  eval_num_iterations: 300
+  max_lr: 0.0003
+  min_lr: 2.9999999999999997e-06
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-08
+  weight_decay: 0.01
+  max_l2_norm: 5.0
+  warm_up_steps: 600
+  anneal_steps: 6000
+  log_interval: 6
+  val_interval: 60
+  save_interval: 600
+  val_num_iterations: 20
+  resume_from: 0
+runtime:
+  device: cuda
+  dtype: float32
+  seed: 42
+  compile: true
+prediction:
+  input_fasta_path: /home/wjiang34/LLM/TriEvo/dataset/bacteria/NC_000964.3/sequence.fasta
+  output_dir: /home/wjiang34/LLM/TriEvo/dataset/bacteria/NC_000964.3/sequence.fasta.kmer6s6
+  max_length: ${data.context_length}
+  temperature: 1.0
+  top_p: 0.9

@@ -1,0 +1,5 @@
+kind: kmer
+kmer_size: 6
+stride: 1
+add_bos: false
+add_eos: true

@@ -1,0 +1,55 @@
+defaults:
+  - model: small
+  - tokenizer: perbase
+  - _self_
+
+experiment:
+  name: small_tokenizer_comparison_wd_5
+  output_dir: out_experiments/${experiment.name}/${tokenizer.kmer_size}_${tokenizer.stride}
+  checkpoint_dir: null
+  log_dir: null
+  tb_log_dir: null
+  do_accounting: true
+  do_train: true
+  do_eval: true
+  do_predict: false
+
+data:
+  dataset_root: dataset/refseq_viral
+  add_reverse_complement: true
+  train_path: ${data.dataset_root}/k${tokenizer.kmer_size}_s${tokenizer.stride}/train_vir.bin
+  val_path: ${data.dataset_root}/k${tokenizer.kmer_size}_s${tokenizer.stride}/val_vir.bin
+  test_path: ${data.dataset_root}/k${tokenizer.kmer_size}_s${tokenizer.stride}/test_vir.bin
+  batch_size: 64
+  context_length: 256
+
+training:
+  train_num_iterations: 6000
+  eval_num_iterations: 300
+  max_lr: 0.0003
+  min_lr: null
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  weight_decay: 0.01
+  max_l2_norm: 5.0
+  warm_up_steps: null
+  anneal_steps: null
+  log_interval: null
+  val_interval: null
+  save_interval: null
+  val_num_iterations: null
+  resume_from: 0
+
+runtime:
+  device: cuda
+  dtype: float32
+  seed: 42
+  compile: true
+
+prediction:
+  input_fasta_path: null
+  output_dir: null
+  max_length: ${data.context_length}
+  temperature: 1.0
+  top_p: 0.9
