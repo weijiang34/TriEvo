@@ -17,7 +17,9 @@ os.makedirs(OUT, exist_ok=True)
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-ZERO = 1.370  # per-base 频率零模型 (nats/base, 经验值)
+ZERO = 1.3838  # per-base 频率零模型 (nats/base, 实测 train→val 交叉熵)
+# 来源: design/markov_baseline/markov_baseline_results.csv order=0 (2026-09-28)
+# 旧值 1.370 为按 ~41% GC 的理论估计，实测语料组成更均衡，作废。
 
 STRIDE = {"perbase": 1, "kmer3": 1, "kmer6": 1, "kmer6s2": 2, "kmer6s6": 6}
 VOCAB = {"perbase": 4, "kmer3": 64, "kmer6": 4096, "kmer6s2": 4096, "kmer6s6": 4096}
@@ -130,7 +132,7 @@ for tok in ["perbase", "kmer3"]:
     axA.plot(sub["lr"], sub["nats_per_base"], "o-", color=TOK_COLOR[tok],
              label=TOK_LABEL[tok], lw=1.8, ms=5)
 axA.axhline(ZERO, color="#888888", ls="--", lw=1.2)
-axA.text(1.05e-5, ZERO + 0.001, "频率零模型 1.370", va="bottom", fontsize=8.5, color="#555555")
+axA.text(1.05e-5, ZERO + 0.001, f"频率零模型 {ZERO:.4f}(实测)", va="bottom", fontsize=8.5, color="#555555")
 axA.set_xscale("log"); axA.set_ylim(1.30, 1.55)
 axA.set_xticks(LR_ORDER); axA.set_xticklabels(["1e-5", "3e-5", "1e-4", "3e-4"])
 axA.set_xlabel("学习率"); axA.set_ylabel("val loss (nats / new-base)")
@@ -166,7 +168,7 @@ for tok in ["perbase", "kmer3"]:
     ys = [sub.loc[mm, "nats_per_base"] for mm in MODELS]
     axA.plot(xs, ys, "o-", color=TOK_COLOR[tok], label=TOK_LABEL[tok], lw=1.8, ms=5)
 axA.axhline(ZERO, color="#888888", ls="--", lw=1.2)
-axA.text(9.5, ZERO + 0.001, "频率零模型 1.370", fontsize=8.5, color="#555555")
+axA.text(9.5, ZERO + 0.001, f"频率零模型 {ZERO:.4f}(实测)", fontsize=8.5, color="#555555")
 axA.set_xscale("log"); axA.set_ylim(1.28, 1.40)
 axA.set_xticks([10, 100, 1000]); axA.set_xticklabels(["10M", "100M", "1B"])
 axA.set_xlabel("参数量"); axA.set_ylabel("val loss (nats / new-base)")
@@ -221,7 +223,7 @@ for i in range(5):
 ax.set_xticks(range(3))
 ax.set_xticklabels(["tiny\n(8–10M)", "small\n(85–91M)", "large\n(≈0.95B)"], fontsize=9.5)
 ax.set_yticks(range(5)); ax.set_yticklabels([TOK_LABEL[t] for t in TOK_ORDER], fontsize=9)
-ax.set_title("rep_ani_95 上各 (规模×tokenizer) 的最优 val loss (nats/new-base)\n粗体=优于频率零模型 1.370; @标注为对应学习率", fontsize=10)
+ax.set_title(f"rep_ani_95 上各 (规模×tokenizer) 的最优 val loss (nats/new-base)\n粗体=优于频率零模型 {ZERO:.4f}(实测); @标注为对应学习率", fontsize=10)
 cb = fig.colorbar(im, ax=ax, shrink=0.85); cb.set_label("nats / new-base (非线性色标, γ=0.3)")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "fig3_best_config_matrix.png"), dpi=200); plt.close(fig)
 

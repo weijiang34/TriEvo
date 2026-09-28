@@ -4,7 +4,7 @@
 
 > 一项独立的从零预训练研究：语料构建、5 种 tokenizer 方案对比、模型实现，以及横跨三个模型规模（8.4M → 0.95B）的 **52 个受控实验**——训练栈设计遵循 Stanford CS336（Assignment 1–2）方法论，全部独立实现。
 
-**一句话总结**：在 425 Mbp 病毒基因组语料上，参数规模在 ~85M 处饱和（再放大 11 倍参数，验证 loss 仅改善 0.0002 nats/new-base）；6 倍压缩的 6-mer stride-6 tokenizer 恰好塌缩到碱基频率零模型——证据指向：该语料可提取的信号被数据规模锁死，而非模型容量。
+**一句话总结**：在 425 Mbp 病毒基因组语料上，参数规模在 ~85M 处饱和（再放大 11 倍参数，验证 loss 仅改善 0.0002 nats/new-base）；最优 per-base 模型（1.330）**低于实测 0–8 阶全部 Markov 基线**（阶梯 1.384 → 1.355），约一半增益来自 8 阶窗口之外的统计结构；6 倍压缩的 6-mer stride-6 tokenizer 收敛为上下文无关的 6-mer 边际预测器——对确实存在的跨 token 信号（≥0.25 nats/token）提取率为零。
 
 ---
 
@@ -79,7 +79,8 @@ TriEvo 用一份无泄漏语料和一组按 cohort 组织的受控实验回答�
 **统一度量**：不同 stride/词表 tokenizer 的 per-token loss 不可直接比较。所有跨 tokenizer 比较使用 **nats/new-base = best_val_loss ÷ stride**（≈ bits-per-base ÷ ln 2），并对照两个基线：
 
 - 均匀分布基线：每 token ln(vocab)（1.386 / 4.159 / 8.318 nats）
-- **碱基频率零模型：1.370 nats/base**（经验 unigram 熵）。*Gain* = 1.370 − nats/new-base——模型在碱基组成之外提取到的信号量。
+- **碱基频率零模型：1.3838 nats/base（实测）**——train 拟合 unigram、val 评估的交叉熵（`design/markov_baseline/`；旧值 1.370 为理论估计，实测作废）。*Gain* = 1.3838 − nats/new-base——模型在碱基组成之外提取到的信号量。
+- **0–8 阶 Markov 阶梯（实测）**：1.3838 → 1.3554 nats/base（train 拟合、val 评估、带 backoff）——局部统计可解释信号的总上界。
 
 **红线**：跨 cohort 的 loss 差异只报告、不作为证据（batch size、LR、停止规则、RC 跨队列同时变动，混杂无法分离）。
 
@@ -103,21 +104,21 @@ TriEvo 用一份无泄漏语料和一组按 cohort 组织的受控实验回答�
 2. **不是训练不足**：0.95B 模型消耗了 85M 4 倍的 tokens 才到达*相同*的 loss；且 4 档学习率下所有 large run 都在到达 best 后回升（early-stop 由过拟合触发，而非预算截断）。
 3. **与 Chinchilla 一致**：D = 340M unique tokens 时，计算最优参数量 ≈ D/20 ≈ **17M**。tiny（8.4M）在最优以下；small 超出 5×；large 超出 56×。85M 以上 scaling 变平，正是数据受限 scaling 理论的预期。
 
-相对频率零模型的总提取信号：**≈ 0.040 nats/base（约占 1.370 的 2.9%）**——在 ~85M 参数处已耗尽。
+相对实测频率零模型的总提取信号：**≈ 0.0536 nats/base（约占 1.3838 的 3.9%）**——在 ~85M 参数处已耗尽。其中约一半（0.0252）超出 0–8 阶 Markov 可解释范围（见 5.6）。
 
-### 5.2 stride-6 tokenizer 恰好塌缩到零模型
+### 5.2 stride-6 tokenizer 收敛至 6-mer 边际预测器
 
 ![Best config matrix](design/unified_analysis/fig3_best_config_matrix.png)
 
-**全部 20 个 large run（4 档学习率）**中，6-mer stride-6 验证 loss 恒定在 **8.233–8.244**——跨学习率极差仅 0.010。除以 stride 6：**1.372–1.374 nats/base，对照频率零模型 1.370**。
+**全部 20 个 large run（4 档学习率）**中，6-mer stride-6 验证 loss 恒定在 **8.233–8.244**——跨学习率极差仅 0.010。
 
 机制逐层分解：
 
 1. stride=1 时相邻 6-mer token 共享 5/6 碱基，next-token 预测退化为"复制 5 个已知碱基 + 预测 1 个新碱基"——任务难度与 per-base 相同（tiny 6-mer s=1 达到 1.42，接近该下限）。
-2. stride=6 拆除重叠：每个 token 含 6 个真正未知的碱基，每 token 条件熵下限跳升至 ≥ 6 × 1.370 = 8.22。
-3. 实测 8.233 ≈ 6 × 1.3722——模型学到的是*碱基组成*（比均匀分布 ln(4096) = 8.318 低 0.085），**跨碱基结构为零**：看到了上文，却只用边际频率。
+2. stride=6 拆除重叠：每个 token 含 6 个真正未知的碱基。上下文无关预测器的理论落点是 **6-mer 块边际分布**——按链式分解恰等于 0–5 阶 Markov 交叉熵之和 **8.240** nats/token（各阶实测：1.3838+1.3778+1.3755+1.3692+1.3675+1.3658）。
+3. 实测 8.233–8.244 将理论落点 8.240 夹在中间（±0.007）——模型**完整学会了 token 内全部结构**（较独立碱基 ×6=8.303 低 0.06，含二核苷酸至 5 阶窗口统计），**跨 token 结构提取 ≈ 0**。
 
-**解读**：6× 压缩买到 12,288 bp 有效上下文（2,048 tokens），但可提取信号（~0.04 nats/base）几乎全部是局部的——上下文付了全款，从未被使用。（边界：Evo 以 7B 参数 / ~100× 数据证明大词表 tokenizer 在更大预算下可行；本发现限定于 ≤0.95B 参数 / 340M tokens 预算区。）
+**解读**：6× 压缩买到 12,288 bp 有效上下文（2,048 tokens），而语料中确实存在跨 token 信号（per-base 模型击败 8 阶 Markov 达 0.025 nats/base，折合 ≥0.25 nats/token）——但 stride-6 对这部分信号的提取率为 **0%**：每 token 6 碱基的联合预测任务耗尽了模型容量，长程依赖从未被学到。上下文付了全款，从未被使用。（边界：Evo 以 7B 参数 / ~100× 数据证明大词表 tokenizer 在更大预算下可行；本发现限定于 ≤0.95B 参数 / 340M tokens 预算区。）
 
 ### 5.3 Tokenizer 排名是学习率的函数
 
@@ -142,18 +143,37 @@ tiny 规模上排序**恰好反转**：3e-4 对*所有* tokenizer 更优（per-b
 
 6-mer s=1 / s=2 随规模单调劣化（s=1：1.42 → 2.25 → 6.77），梯度范数跨规模爆炸（lr 1e-5 档 max：tiny 1.8 → small 58 → large **1.9×10⁶**）。我们明确**不**将其解读为"6-mer tokenization 在大规模更差"——这是优化不稳定、LR-规模失配与预算不足的未定混合征兆，作为未完成项如实标注，而非编入叙事。
 
+### 5.6 模型效果判定：0–8 阶 Markov 基线阶梯
+
+在 per-base 打包流（train 339.9M / val 41.7M tokens）上实测（train 拟合 → val 评估交叉熵，带 backoff；脚本与数据见 `design/markov_baseline/`）：
+
+| k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| CE (nats/base) | 1.3838 | 1.3778 | 1.3755 | 1.3692 | 1.3675 | 1.3658 | 1.3597 | 1.3576 | 1.3554 |
+
+![Markov ladder](design/markov_baseline/fig5_markov_ladder.png)
+
+三个判定：
+
+1. **最优 per-base 模型（1.3302）低于全部 0–8 阶 Markov 基线**——较 8 阶（1.3554）低 0.0252 nats/base。0–8 阶局部统计总共只值 0.0284，模型超出 8 阶的部分与之几乎等量：**总增益 0.0536 中约 47% 来自 8 阶窗口之外的统计结构**（k > 8 未测，不区分"更高阶局部"与"真正长程"）。
+2. **模型是目前全项目对任务熵率最紧的上界估计器**：熵率 ≤ 1.3302 < 8 阶 1.3554 < … < unigram 1.3838。熵率下界未知——"熵受限"判定依旧不可作。
+3. **阶梯在 k=3、k=6 处跳变**（相邻增益 0.0063 / 0.0061，约 3 倍于其他阶）——密码子周期性：编码区为主的病毒基因组 3 周期核苷酸使用被干净检出。
+
+附带：train 按 EOS 切出 13,871 条序列 = 17,339 × 0.8 ✓；val 自拟合 vs train→val 各阶差 ≤ 0.005 → 切分无分布漂移。Markov 以 forward-only train 拟合（模型训练含 RC 扩增），对 forward val 该基线只强不弱——模型的领先是保守估计。
+
 ## 6. 核心结论
 
 1. **参数 scaling 饱和，语料是约束**。同协议下 8.4M → 85M → 0.95B 得到 1.3481 → 1.3311 → 1.3309 nats/new-base；11× 参数只降 0.0002。D = 340M 的 Chinchilla 最优参数约 17M。
-2. **纯压缩 tokenizer（6-mer s=6）收敛为上下文无关的碱基组成预测器**（该预算区）：8.233–8.244 nats/token ≈ 6 × 1.372，跨 4 档 LR 恒定——压缩买到的 12,288 bp 上下文，局部信号用不上。
-3. **Tokenizer 排名依赖 LR 与规模**（0.95B 上 per-base 鲁棒 / 3-mer 敏感 / 6-mer 不稳；8.4M 上排序反转）——单一 LR 的 tokenizer 对比存在混淆。
-4. **数据卫生（ANI 去冗余）主要稳定重叠词表 tokenizer**（6-mer s=1：1.872 → 1.421，发散消除）。
-5. **手写 Triton FA2 达到 fused kernel 量级**：长序列较朴素 attention 快 5–36×；性能位于官方 flash 与 mem-efficient 两个后端之间；差距已定位并有归因。
+2. **最优模型低于实测 0–8 阶全部 Markov 基线**（1.330 vs 阶梯 1.384→1.355），约一半增益（0.025 nats/base）超出 8 阶统计——模型学到的是真实结构，不是局部统计的记忆。
+3. **纯压缩 tokenizer（6-mer s=6）收敛为上下文无关的 6-mer 边际预测器**（该预算区）：8.233–8.244 nats/token ≈ 0–5 阶 Markov 基线之和 8.240，跨 4 档 LR 恒定；对确实存在的跨 token 信号（≥0.25 nats/token）提取率为零——压缩买到的 12,288 bp 上下文，从未被使用。
+4. **Tokenizer 排名依赖 LR 与规模**（0.95B 上 per-base 鲁棒 / 3-mer 敏感 / 6-mer 不稳；8.4M 上排序反转）——单一 LR 的 tokenizer 对比存在混淆。
+5. **数据卫生（ANI 去冗余）主要稳定重叠词表 tokenizer**（6-mer s=1：1.872 → 1.421，发散消除）。
+6. **手写 Triton FA2 达到 fused kernel 量级**：长序列较朴素 attention 快 5–36×；性能位于官方 flash 与 mem-efficient 两个后端之间；差距已定位并有归因。
 
 ## 7. 局限性（如实陈述）
 
 - 本发布**不含下游任务评测**，结论严格限于 held-out 语言建模 loss。
-- "参数饱和"的准确含义是**"该语料、近单 epoch 预算下，参数无法提取更多信号"**——不是"不可约熵"的论断；精确界定任务熵需要高阶 Markov 基线（频率零模型是上界参照，不是下界）。
+- "参数饱和"的准确含义是**"该语料、近单 epoch 预算下，参数无法提取更多信号"**——不是"不可约熵"的论断。0–8 阶 Markov 基线已实测（5.6）：全部为熵率**上界**（模型自身给出最紧的 1.3302），熵率下界仍未知，"熵受限"判定不可作。
 - 所有 run 消耗 **< 0.5 epoch**；硬件异构（V100/L40S/H200），部分 run 被节点抢占中断；RC 效应**无受控估计**。
 - 跨 cohort 比较只报告、不解读——这是设计决定。
 
@@ -165,11 +185,12 @@ tiny 规模上排序**恰好反转**：3e-4 对*所有* tokenizer 更优（per-b
 design/unified_analysis/        # 52-run 总表 + 4 张图 + 完整分析（ANALYSIS.md）
 design/experiment_summary/      # R1 loss 表（20 runs）
 design/large_experiment_summary/# R2 large/small/tiny 汇总（32 runs）
+design/markov_baseline/         # 0–8 阶 Markov 基线（脚本 + 实测结果 + 阶梯图）
 design/rc_experiment/           # 三臂 RC 干预实验设计（尚未运行）
 benchmark_results/              # Triton FA2 基准套件（fp16/bf16/fp32）+ 汇总
 ```
 
-本 README 中每个数字均可溯源至 `design/unified_analysis/master_experiments.csv` 或 `benchmark_results/benchmark_summary.md`。
+本 README 中每个数字均可溯源至 `design/unified_analysis/master_experiments.csv`、`design/markov_baseline/markov_baseline_results.csv` 或 `benchmark_results/benchmark_summary.md`。
 
 ## 9. Roadmap
 
@@ -177,8 +198,9 @@ benchmark_results/              # Triton FA2 基准套件（fp16/bf16/fp32）+ �
 - [x] 5 种 tokenizer 方案研究 + nats/new-base 归一化
 - [x] tiny（8.4M）/ small（85M）/ large（0.95B）训练——52 runs
 - [x] Triton FA2 + 系统基准（3 dtype × 4 head_dim × 5 序列长度）
+- [x] 0–8 阶 Markov 基线阶梯（2026-09 实测，`design/markov_baseline/`）
 - [ ] 三臂 RC 扩增实验（已设计，`design/rc_experiment/DESIGN.md`）
-- [ ] 高阶 Markov 基线（熵下界）
+- [ ] Markov 阶梯扩展至 k>8（区分更高阶局部与真正长程结构）
 - [ ] 代码发布与下游任务评测
 
 ## 致谢
