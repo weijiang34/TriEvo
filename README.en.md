@@ -54,7 +54,7 @@ TriEvo answers both with a leakage-free corpus and a controlled, cohort-structur
 
 - AdamW, cosine LR schedule, gradient clipping, mixed precision; multi-GPU DDP
 - **Triton FlashAttention-2 (forward + backward)**, fp32 accumulation, validated against the reference implementation (numerical error < 1e-2, fp16 standard tolerance)
-- Trained on a heterogeneous cluster (V100-32GB / L40S-46GB / H200-143GB); large runs on 4×GPU DDP; throughput 215k / 100k / 14k tokens/s at tiny / small / large scale
+- The bulk of training ran on a single-node 4×4090 DDP setup (all 20 large hyperparameter sweeps plus the three-scale same-protocol cohort); the remaining runs used single GPUs (3090 / V100 / L40S / H200); throughput ≈ 215k / 100k / 14k tokens/s at tiny / small / large scale
 
 **Triton FA2 system benchmark** (single RTX 4090, torch 2.3.1; 3 dtypes × 4 head_dims × 5 seq lens; PyTorch SDPA backends forced and verified via profiler):
 
@@ -176,7 +176,7 @@ Also: train splits into 13,871 sequences = 17,339 × 0.8 ✓; val self-fit vs tr
 
 - **No downstream-task evaluation** is included in this release; conclusions are restricted to held-out language-modeling loss.
 - The "parameter saturation" claim is strictly **"parameters cannot extract more signal from this corpus under a near-single-epoch budget"** — it is not a claim about irreducible entropy. The 0–8 order Markov ladder is now measured (5.6): all baselines are entropy-rate **upper bounds** (the model itself provides the tightest, 1.3302); the lower bound remains unknown, so no "entropy-limited" claim is made.
-- All runs consumed **< 0.5 epoch**; hardware was heterogeneous (V100/L40S/H200) and some runs were interrupted by node preemption; the RC effect has **no controlled estimate**.
+- All runs consumed **< 0.5 epoch**; the bulk of training ran on a single-node 4×4090 DDP setup, with the remaining runs on heterogeneous single GPUs (3090/V100/L40S/H200), some interrupted by preemption; the RC effect has **no controlled estimate**.
 - Cross-cohort comparisons are reported but not interpreted, by design.
 
 ## 8. Repository & Reproducibility

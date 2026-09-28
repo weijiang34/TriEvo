@@ -54,7 +54,7 @@ TriEvo 用一份无泄漏语料和一组按 cohort 组织的受控实验回答�
 
 - AdamW、cosine 学习率调度、梯度裁剪、混合精度；多卡 DDP
 - **Triton FlashAttention-2（forward + backward）**，fp32 累加，与参考实现对齐验证（数值误差 < 1e-2，fp16 标准容差）
-- 训练于异构集群（V100-32GB / L40S-46GB / H200-143GB）；large 轮次为 4×GPU DDP；tiny / small / large 吞吐分别为 215k / 100k / 14k tokens/s
+- 训练主体于单机 4×4090 DDP 完成（含 large 全部 20 组超参扫描与三档同协议 scaling），其余 run 于单卡（3090 / V100 / L40S / H200 等）执行；tiny / small / large 吞吐分别约 215k / 100k / 14k tokens/s
 
 **Triton FA2 系统基准**（单卡 RTX 4090，torch 2.3.1；3 dtype × 4 head_dim × 5 序列长度；强制 PyTorch SDPA 三后端逐一对比，并用 profiler 实锤后端 dispatch）：
 
@@ -174,7 +174,7 @@ tiny 规模上排序**恰好反转**：3e-4 对*所有* tokenizer 更优（per-b
 
 - 本发布**不含下游任务评测**，结论严格限于 held-out 语言建模 loss。
 - "参数饱和"的准确含义是**"该语料、近单 epoch 预算下，参数无法提取更多信号"**——不是"不可约熵"的论断。0–8 阶 Markov 基线已实测（5.6）：全部为熵率**上界**（模型自身给出最紧的 1.3302），熵率下界仍未知，"熵受限"判定不可作。
-- 所有 run 消耗 **< 0.5 epoch**；硬件异构（V100/L40S/H200），部分 run 被节点抢占中断；RC 效应**无受控估计**。
+- 所有 run 消耗 **< 0.5 epoch**；训练主体于单机 4×4090 DDP，其余 run 于单卡异构 GPU（3090/V100/L40S/H200 等），部分 run 被抢占中断；RC 效应**无受控估计**。
 - 跨 cohort 比较只报告、不解读——这是设计决定。
 
 ## 8. 仓库与可复现性
