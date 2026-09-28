@@ -4,118 +4,6 @@ import torch
 from torch.cuda.amp import custom_fwd, custom_bwd
 import torch.cuda.nvtx as nvtx
 
-class FA2(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, Q, K, V, is_causal):
-        # Q: (B, L, D)
-        # K: (B, L, D)
-        # V: (B, L, D)
-        # is_causal: bool
-        # output: (B, L, D)
-        B, L, D = Q.shape
-        assert K.shape == (B, L, D)
-        assert V.shape == (B, L, D)
-
-        B_q = 16
-        B_k = 16
-
-        output = torch.empty_like(Q)
-        logsumexp = torch.zeros((B, L), device=Q.device, dtype=Q.dtype)
-
-        for t_q in range(L // B_q):
-            q_start, q_end = t_q * B_q, min((t_q + 1) * B_q, L)
-            Q_block = Q[:, q_start:q_end, :]
-
-            m_prev = torch.full((B, q_end - q_start, 1), -float('inf'), device=Q.device, dtype=Q.dtype)
-            l_prev = torch.zeros((B, q_end - q_start, 1), device=Q.device, dtype=Q.dtype)
-            o_prev = torch.zeros((B, q_end - q_start, D), device=Q.device, dtype=Q.dtype)
-            for t_k in range(L // B_k):
-                # Compute the attention scores for the current block
-                K_block = K[:, t_k * B_k:(t_k + 1) * B_k, :]
-                V_block = V[:, t_k * B_k:(t_k + 1) * B_k, :]
-
-                # Compute the attention scores
-                S_block = torch.einsum('bqd,bkd->bqk', Q_block, K_block) / (D ** 0.5)
-                # compute max 
-                m_new = torch.max(m_prev, S_block.max(dim=-1, keepdim=True).values)
-                P = torch.exp(S_block - m_new)
-                l_new = torch.exp(m_prev - m_new) * l_prev + P.sum(dim=-1, keepdim=True)
-                o_new = torch.exp(m_prev - m_new) * o_prev + torch.einsum('bqk,bkd->bqd', P, V_block)
-                
-                m_prev = m_new
-                l_prev = l_new
-                o_prev = o_new
-
-            # Store the output block in the output tensor
-            output[:, q_start:q_end, :] = o_prev / l_prev
-            logsumexp[:, q_start:q_end] = (m_prev + torch.log(l_prev)).squeeze(-1)
-
-        # 保存用于反向传播
-        ctx.save_for_backward(Q, K, V, logsumexp, output)
-        ctx.is_causal = is_causal
-
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        Q, K, V, logsumexp, output = ctx.saved_tensors
-
-        D_mat = torch.sum(torch.einsum('bqd,bqd->bqd', output, grad_output), dim=-1, keepdim=True)  # (B, L, 1)
-        scale = 1 / (Q.shape[-1] ** 0.5)
-
-        S = torch.einsum('bqd,bkd->bqk', Q, K) * scale
-        P = torch.exp(S - logsumexp.unsqueeze(-1))
-        dV = torch.einsum('bqk,bqd->bkd', P, grad_output)
-        dP = torch.einsum('bqd,bkd->bqk', grad_output, V)
-        dS = P * (dP - D_mat)
-        dQ = torch.einsum('bqk,bkd->bqd', dS, K) * scale
-        dK = torch.einsum('bqk,bqd->bkd', dS, Q) * scale
-
-        return dQ, dK, dV, None
-
-    @staticmethod
-    def __backward(ctx, grad_output, output):
-        Q, K, V, logsumexp = ctx.saved_tensors
-
-        # pre-compute D matrix
-        D_mat = torch.sum(torch.einsum('bqd,bqd->bqd', output, grad_output), dim=-1, keepdim=True)  # (B, L, 1)
-
-        B, L, D = Q.shape
-        assert K.shape == (B, L, D)
-        assert V.shape == (B, L, D)
-
-        B_q = 16
-        B_k = 16
-        
-        scale = 1 / (D ** 0.5)
-        dQ = torch.zeros_like(Q)
-        dK = torch.zeros_like(K)
-        dV = torch.zeros_like(V)
-
-        for t_q in range(L // B_q):
-            q_start, q_end = t_q * B_q, min((t_q + 1) * B_q, L)
-            Q_block = Q[:, q_start:q_end, :]
-
-            for t_k in range(L // B_k):
-                K_block = K[:, t_k * B_k:(t_k + 1) * B_k, :]
-                V_block = V[:, t_k * B_k:(t_k + 1) * B_k, :]
-                L_block = logsumexp[:, q_start:q_end]
-                dO_block = grad_output[:, q_start:q_end, :]
-                D_block = D_mat[:, q_start:q_end, :]
-
-                S_block = torch.einsum('bqd,bkd->bqk', Q_block, K_block) * scale
-
-                P_block = torch.exp(S_block - L_block)
-
-                dV_block = torch.einsum('bqk,bqd->bkd', P_block, dO_block)
-                dP_block = torch.einsum('bqd,bkd->bqk', dO_block, V_block)
-                dS_block = torch.einsum('bqk,bqk->bqd', P_block, (dP_block - D_block))
-                dQ_block = torch.einsum('bqk,bkd->bkd', dS_block, K_block) * scale
-                dK_block = torch.einsum('bqk,bqd->bkd', dS_block, Q_block) * scale
-
-                # ... unfinished 
-        return dQ, dK, dV
-
 # autotune_configs = [
 #     # 根据硬件自动测试不同的 BLOCK 组合和流水线级数 (num_stages)
 #     triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=4, num_warps=4),
@@ -195,13 +83,15 @@ def flash_fwd_kernel(
     m_prev = tl.full((Q_TILE_SIZE, 1), -float('inf'), dtype=tl.float32)
     l_prev = tl.zeros((Q_TILE_SIZE, 1), dtype=tl.float32)
     o_prev = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
+
+    compute_dtype = Q_block.dtype
     
     for j in tl.range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
         # load current block of K and V
         K_block = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")  # (K_TILE_SIZE, D)
         V_block = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")  # (K_TILE_SIZE, D)
 
-        S_block = tl.dot(Q_block.to(tl.float16), tl.trans(K_block.to(tl.float16))) * scale   # (Q_TILE_SIZE, K_TILE_SIZE)
+        S_block = tl.dot(Q_block.to(compute_dtype), tl.trans(K_block.to(compute_dtype))) * scale   # (Q_TILE_SIZE, K_TILE_SIZE)
         
         if IS_CAUSAL:
             qstart = query_tile_index * Q_TILE_SIZE
@@ -216,7 +106,7 @@ def flash_fwd_kernel(
         P = tl.exp(S_block - m_new)    # (Q_TILE_SIZE, K_TILE_SIZE) - (Q_TILE_SIZE, 1) = (Q_TILE_SIZE, K_TILE_SIZE)
 
         l_new = tl.exp(m_prev - m_new) * l_prev + tl.sum(P, axis=1, keep_dims=True)     # (Q_TILE_SIZE, 1) * (Q_TILE_SIZE, 1) + (Q_TILE_SIZE, 1) = (Q_TILE_SIZE, 1)
-        o_new = tl.exp(m_prev - m_new) * o_prev + tl.dot(P.to(V_block.dtype), V_block)    # (Q_TILE_SIZE, D)
+        o_new = tl.exp(m_prev - m_new) * o_prev + tl.dot(P.to(compute_dtype), V_block.to(compute_dtype))    # (Q_TILE_SIZE, D)
                 # (Q_TILE_SIZE, 1) * (Q_TILE_SIZE, D) + (Q_TILE_SIZE, K_TILE_SIZE) @ (K_TILE_SIZE, D) = (Q_TILE_SIZE, D)
         m_prev = m_new
         l_prev = l_new
@@ -532,7 +422,7 @@ def flash_bwd_dq_kernel(
             q_indices = tl.arange(0, Q_TILE_SIZE) + q_start
             k_indices = tl.arange(0, K_TILE_SIZE) + k_start
             mask = q_indices[:, None] < k_indices[None, :]
-            S_block = tl.where(mask, -1e6, S_block)
+            S_block = tl.where(mask, float("-inf"), S_block)
         P_block = tl.exp(S_block - L_block[:,None])
 
         # compute gradients
